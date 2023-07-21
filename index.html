@@ -1,0 +1,1600 @@
+<html lang="ru"><head><link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@mdi/font@4.x/css/materialdesignicons.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.min.css" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui">
+<link href="/temp_lib/css/interactive_list.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/vue@2.6.12"></script>
+<script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
+<template id="filters">
+  <v-row align="center">
+    <v-col class="d-flex" cols="12" v-for="field in getFields()" :key="field.next_step">
+      <v-select :items="getItems(field.current_position)" :label="field.name" item-text="name" item-value="id" :disabled="getDisabled(field.current_position)" v-model="fieldsModels[field.current_position]" @change="changeValue($event, field.current_position)" :loading="isLoading(field.current_position)" dense=""></v-select>
+    </v-col>
+  </v-row>
+</template>
+<script type="application/javascript">
+Vue.component('filters-component', {
+  template: '#filters',
+  delimiters: ['${', '}'],
+  props: ['filter_list', 'values', 'selected'],
+  data: function () {
+    return {
+      filterFields: [],
+      fieldsModels: {},
+      fieldsDisabled: {},
+      fieldsLoading: {},
+      valuesList: {},
+      saveGetParams: 3,
+      uri: window.location.search,
+      GUID: '00000000-0000-0000-0000-000000000000-1'
+    }
+  },
+  created: function () {
+    //Обрабатываем сырые данные
+    this.parseRawData();
+    //Устанавливаем параметры в GET
+    this.setHistoryInfo();
+    //Обработать получение данных
+    this.getFieldInfo();
+  },
+
+  methods: {
+    isLoading(key) {
+      return this.fieldsLoading[key];
+    },
+    //Выводим список всех полей
+    getFields() {
+      return this.filterFields;
+    },
+    getDisabled(key) {
+      return this.fieldsDisabled[key];
+    },
+    //Возвращаем значения для поля
+    getItems(key) {
+
+      let privilege = [];
+
+      if (key === 'basis_admission') {
+
+        this.valuesList[key].map((item, i) => {
+          let p_id = item.id
+
+          if (item.id !== '0' && item.add_data[0]) {
+            p_id = `${item.id}|${item.add_data[0].basis_admission_privilege}`;
+          }
+
+          privilege.push({
+            id: p_id,
+            name: item.name,
+            add_data: item.add_data,
+          });
+        });
+      } else {
+        privilege = this.valuesList[key]
+      }
+      return privilege;
+
+    },
+    //Обрабатываем изменение параметра
+    changeValue(event, key) {
+
+      let startClean = false;
+
+      this.filterFields.forEach(item => {
+
+        if (startClean) {
+          Vue.set(this.fieldsModels, item.current_position, '0')
+        }
+
+        if (item.current_position === key) {
+          startClean = true;
+        }
+      })
+
+      Vue.set(this.fieldsModels, key, event)
+
+      this.setHistoryInfo()
+      this.getFieldInfo()
+    },
+    //Получить инфомрацию по полям
+    getFieldInfo() {
+      for (let key in this.filterFields) {
+        if (this.fieldsModels[this.filterFields[key].current_position] !== '0') {
+          let tmpURI = `${this.uri}&actions=${this.filterFields[key].next_step}`;
+          this.axiosReq(`/ajax/interactive_detail${tmpURI}`, this.filterFields[key])
+        } else {
+          if (typeof this.fieldsModels[this.filterFields[key].next_step] !== "undefined") {
+            Vue.set(this.fieldsDisabled, this.filterFields[key].next_step, true)
+            Vue.set(this.fieldsModels, this.filterFields[key].next_step, '0')
+            this.setHistoryInfo();
+          }
+          if (this.filterFields[key].theEnd === 'true' && this.fieldsModels[this.filterFields[key].current_position] === '0') {
+            this.$emit('show-table', false);
+          }
+        }
+      }
+    },
+    async axiosReq(uri, item) {
+      try {
+        const {data} = await axios.get(uri);
+        if (this.isSleep(item, data)) {
+          this.setHistoryInfo()
+          this.getFieldInfo()
+          return null;
+        }
+
+        if (
+            typeof data.data !== "undefined"
+            && typeof data.data[item.next_step] !== "undefined"
+            && item.theEnd !== 'true'
+        ) {
+          for (let field of this.filterFields) {
+            if (field.current_position === item.next_step) {
+              if (this.fieldsModels[item.next_step] === this.GUID)
+                continue;
+              Vue.set(this.fieldsDisabled, field.current_position, false)
+              field.isEmpty = 'false';
+              this.valuesList[item.next_step] = data.data[item.next_step]
+            }
+          }
+        } else {
+          if (
+              typeof data.data !== "undefined"
+              && typeof data.data.list_applicants !== "undefined"
+              && typeof data.data.list_fields !== "undefined"
+          ) {
+            this.$emit('data-table-info', {
+              list_applicants: data.data.list_applicants,
+              list_fields: data.data.list_fields,
+              add_data: data.data.add_data
+            });
+            this.$emit('show-table', true);
+          } else {
+            console.log(121, data.errors);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    //Установка параметров в GET
+    setHistoryInfo() {
+      //Временный массив для подготовки данных
+      let tmpUri = [];
+      //Выполняем сохранение определенного количества GET параметров
+      for (let i = 0; i < this.saveGetParams; i++)
+          //Записываем данные в массив
+        tmpUri.push(this.uri.split('&')[i])
+      //Перебираем все модели для подстановки новых значений
+      for (let model in this.fieldsModels)
+          //Проверяем выбрано ли какое то значение
+        if (this.fieldsModels[model] !== '0')
+          tmpUri.push(`${model}=${this.fieldsModels[model]}`)
+      //Устанавливает новый текущий URL
+      this.uri = tmpUri.join('&');
+      //Изменяем историю GET строки
+      this.countChangeHistory++;
+      history.replaceState({}, '', this.uri)
+    },
+    //Обрабатываем сырые данные
+    parseRawData() {
+      //временная переменная для разбора и проверки
+      let tmpJSON;
+      //проверяем является ли строка JSON
+      if (this.IsJsonString(this.filter_list)) {
+        //Разбриаем JSON
+        tmpJSON = JSON.parse(this.filter_list);
+        //Проверяем предопределенные параметры списка полей
+        if (
+            tmpJSON
+            && typeof tmpJSON.data !== "undefined"
+            && typeof tmpJSON.data.filter_field !== "undefined"
+        ) {
+          //Присваеваем значения в поле фильтрации
+          this.filterFields = tmpJSON.data.filter_field;
+          this.filterFields.forEach(item => {
+            Vue.set(this.fieldsDisabled, item.current_position, item.isEmpty !== "false");
+          })
+        } else
+            //Не корректная инфомрация по фильтрам
+          console.log('не удалось получить справочник фильтров')
+      }
+      //проверяем является ли строка JSON
+      if (this.IsJsonString(this.values)) {
+        //Разбриаем JSON
+        tmpJSON = JSON.parse(this.values);
+        //Проверяем корректность разобранного JSON
+        if (tmpJSON) {
+          // Перебераем спсок полей для поиска значений
+          this.filterFields.forEach(value => {
+            //Создаем пустое представление для значений
+            Vue.set(this.valuesList, value.current_position, []);
+            //Создаем пустое представление для моделей
+            Vue.set(this.fieldsModels, value.current_position, '0');
+            //Проверяем имеется ли данные во входящих параметрах
+            if (
+                value.isEmpty === 'false'
+                && tmpJSON[value.current_position] !== undefined
+                && tmpJSON[value.current_position].data !== undefined
+                && tmpJSON[value.current_position].data[value.current_position] !== undefined
+            ) {
+              //Записываем входные парамтеры в массив значений
+              let valueRes = tmpJSON[value.current_position].data[value.current_position];
+              Vue.set(this.valuesList, value.current_position, valueRes);
+            }
+          })
+        } else
+          console.log('не удалось получить справочник стартовых значений')
+      }
+      //проверяем является ли строка JSON
+      if (this.IsJsonString(this.selected)) {
+        //Разбриаем JSON
+        tmpJSON = JSON.parse(this.selected);
+        //Проверяем корректность разобранного JSON
+        if (tmpJSON)
+            //Перебираем все входящие парамтеры
+          for (let select in tmpJSON)
+              //Проверяем имеется такой ключ в массиве моделей
+            if (typeof this.fieldsModels[select] !== "undefined")
+                //Присваеваем моделе значение из входящих параметров
+              this.fieldsModels[select] = tmpJSON[select];
+      } else
+        console.log('ошибка обработки выбранных значений')
+    },
+
+    //проверяем необходимость пропуска шага
+    isSleep(item, data) {
+      try {
+        let sleep = false;
+        let nextStep = false;
+
+        this.filterFields.forEach(value => {
+          if (value.current_position === item.next_step && value.sleep === 'true')
+            sleep = true;
+        })
+        data.data[item.next_step].forEach(value => {
+          if (sleep && value.id === this.GUID)
+            nextStep = true;
+        })
+
+        if (nextStep && this.fieldsModels[item.next_step] !== this.GUID) {
+          this.valuesList[item.next_step] = [{id: this.GUID, 'name': 'Профиль отсутствует'}]
+          Vue.set(this.fieldsModels, item.next_step, this.GUID)
+          Vue.set(this.fieldsDisabled, item.next_step, true)
+          return true
+        }
+        return false
+      } catch (e) {
+        return false
+      }
+    },
+
+    IsJsonString(str) {
+      try {
+        JSON.parse(str);
+      } catch (e) {
+        return false;
+      }
+      return true;
+    }
+  }
+})
+</script>
+<template id="table">
+  <v-row align="center" justify="center" id="table-row">
+    <v-col cols="12">
+      <v-alert color="green lighten-2">
+        <p>Последнее обновление: ${getDateCreate}</p>
+        <p>Всего мест: ${getCountSeats}</p>
+      </v-alert>
+    </v-col>
+    <v-col cols="12">
+      <v-data-table :headers="getHeader" :items="getItems" :items-per-page="5" class="elevation-1" :search="search">
+        <template v-slot:top="">
+          <v-text-field v-model="search" label="Поиск по таблице" class="mx-4"></v-text-field>
+        </template>
+        <template v-slot:item="{item}">
+          <tr :style="{ backgroundColor: item.color}">
+            <td v-for="(val, key) in item" v-if="checkHeader(key)">
+              <v-tooltip v-if="key === 'ВсплывающаяПодсказка'" bottom="" v-show="val">
+                <template v-slot:activator="{ on, attrs }">
+                  <v-icon medium="" color="darken-2" v-bind="attrs" v-on="on">mdi-help-circle-outline</v-icon>
+                </template>
+                <span>${val}</span>
+              </v-tooltip>
+              <span v-if="key !== 'color' &amp;&amp; key !== 'ВсплывающаяПодсказка'">
+                ${val}
+              </span>
+            </td>
+          </tr>
+        </template>
+      </v-data-table>
+    </v-col>
+  </v-row>
+</template>
+
+<script>
+Vue.component('table-component', {
+  template: '#table',
+  delimiters: ['${', '}'],
+  props: ['table'],
+  data: function () {
+    return {
+      search: '',
+    }
+  },
+  methods: {
+    checkHeader(key) {
+      let select = false;
+      this.table.list_fields.forEach(item => {
+        if (key.toLowerCase() === item.field_name.toLowerCase()
+            || key === 'ВсплывающаяПодсказка'
+        )
+          select = true;
+      })
+      return select;
+    }
+  },
+  computed: {
+    getHeader() {
+      if (typeof this.table.list_fields !== "undefined")
+        return this.table.list_fields.map(item => ({
+          text: item.field_heading,
+          value: item.field_name,
+        }))
+      else return [];
+    },
+    getItems() {
+      // console.log(this.table)
+      return this.table.list_applicants
+    },
+    getDateCreate() {
+      if (this.table.add_data !== undefined) {
+        return this.table.add_data[0].date_filling
+      }
+      return 'неизвестно'
+    },
+    getCountSeats() {
+      if (this.table.add_data !== undefined) {
+        return this.table.add_data[1].number_seats
+      }
+      return 'неизвестно'
+    }
+  }
+
+});
+</script>
+
+<style scoped="">
+#table-row {
+  padding: 3rem 20px 20px 20px;
+}
+</style>
+<template id="snackbar">
+  <v-snackbar v-model="isShow" top="" right="" :color="getColor()">
+    ${text}
+  </v-snackbar>
+</template>
+
+<script>
+Vue.component('snackbar-component', {
+  template: '#snackbar',
+  delimiters: ['${', '}'],
+  props: ['show', 'type', 'text'],
+  data: function () {return {
+    localShow: false
+  }},
+  methods: {
+    getColor(){
+      return this.type === 'error' ? '#EF5350' : '#81C784';
+    }
+  },
+  computed: {
+    isShow(){
+      setTimeout(() => {this.localShow = false}, 6000)
+      return this.localShow;
+    }
+  },
+  watch: {
+    show(val){
+      this.localShow = val
+    }
+  }
+});
+</script>
+
+<style scoped="">
+button:focus{
+  background-color: transparent!important;
+}
+</style>  
+
+
+
+
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Списки поступающих</title>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+  <link rel="stylesheet" type="text/css" href="/temp_lib/css/style.css?2">
+  <link rel="stylesheet" type="text/css" href="/temp_lib/css/style_epk.css?2">
+  <link rel="stylesheet" type="text/css" href="/temp_lib/css/magnific-popup.css">
+  <link rel="stylesheet" type="text/css" href="/temp_lib/css/noty.css?1">
+  <link rel="stylesheet" type="text/css" href="/temp_lib/css/materialize.css">
+  <script src="/temp_lib/js/jquery-3.1.1.min.js"></script>
+  <script src="/temp_lib/js/jquery.maskedinput.min.js"></script>
+  <script src="/temp_lib/js/magnific-popup.js"></script>
+  <script src="/temp_lib/js/script.js?7"></script>
+  <script src="/temp_lib/js/noty.js?1"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/webcamjs/1.0.26/webcam.min.js"></script>
+  <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/jquery-confirm/3.3.2/jquery-confirm.min.css">
+  <script src="//cdnjs.cloudflare.com/ajax/libs/jquery-confirm/3.3.2/jquery-confirm.min.js"></script>
+<style type="text/css" id="vuetify-theme-stylesheet">.v-application a { color: #1976d2; }
+.v-application .primary {
+  background-color: #1976d2 !important;
+  border-color: #1976d2 !important;
+}
+.v-application .primary--text {
+  color: #1976d2 !important;
+  caret-color: #1976d2 !important;
+}
+.v-application .primary.lighten-5 {
+  background-color: #c7fdff !important;
+  border-color: #c7fdff !important;
+}
+.v-application .primary--text.text--lighten-5 {
+  color: #c7fdff !important;
+  caret-color: #c7fdff !important;
+}
+.v-application .primary.lighten-4 {
+  background-color: #a8e0ff !important;
+  border-color: #a8e0ff !important;
+}
+.v-application .primary--text.text--lighten-4 {
+  color: #a8e0ff !important;
+  caret-color: #a8e0ff !important;
+}
+.v-application .primary.lighten-3 {
+  background-color: #8ac5ff !important;
+  border-color: #8ac5ff !important;
+}
+.v-application .primary--text.text--lighten-3 {
+  color: #8ac5ff !important;
+  caret-color: #8ac5ff !important;
+}
+.v-application .primary.lighten-2 {
+  background-color: #6aaaff !important;
+  border-color: #6aaaff !important;
+}
+.v-application .primary--text.text--lighten-2 {
+  color: #6aaaff !important;
+  caret-color: #6aaaff !important;
+}
+.v-application .primary.lighten-1 {
+  background-color: #488fef !important;
+  border-color: #488fef !important;
+}
+.v-application .primary--text.text--lighten-1 {
+  color: #488fef !important;
+  caret-color: #488fef !important;
+}
+.v-application .primary.darken-1 {
+  background-color: #005eb6 !important;
+  border-color: #005eb6 !important;
+}
+.v-application .primary--text.text--darken-1 {
+  color: #005eb6 !important;
+  caret-color: #005eb6 !important;
+}
+.v-application .primary.darken-2 {
+  background-color: #00479b !important;
+  border-color: #00479b !important;
+}
+.v-application .primary--text.text--darken-2 {
+  color: #00479b !important;
+  caret-color: #00479b !important;
+}
+.v-application .primary.darken-3 {
+  background-color: #003180 !important;
+  border-color: #003180 !important;
+}
+.v-application .primary--text.text--darken-3 {
+  color: #003180 !important;
+  caret-color: #003180 !important;
+}
+.v-application .primary.darken-4 {
+  background-color: #001e67 !important;
+  border-color: #001e67 !important;
+}
+.v-application .primary--text.text--darken-4 {
+  color: #001e67 !important;
+  caret-color: #001e67 !important;
+}
+.v-application .secondary {
+  background-color: #424242 !important;
+  border-color: #424242 !important;
+}
+.v-application .secondary--text {
+  color: #424242 !important;
+  caret-color: #424242 !important;
+}
+.v-application .secondary.lighten-5 {
+  background-color: #c1c1c1 !important;
+  border-color: #c1c1c1 !important;
+}
+.v-application .secondary--text.text--lighten-5 {
+  color: #c1c1c1 !important;
+  caret-color: #c1c1c1 !important;
+}
+.v-application .secondary.lighten-4 {
+  background-color: #a6a6a6 !important;
+  border-color: #a6a6a6 !important;
+}
+.v-application .secondary--text.text--lighten-4 {
+  color: #a6a6a6 !important;
+  caret-color: #a6a6a6 !important;
+}
+.v-application .secondary.lighten-3 {
+  background-color: #8b8b8b !important;
+  border-color: #8b8b8b !important;
+}
+.v-application .secondary--text.text--lighten-3 {
+  color: #8b8b8b !important;
+  caret-color: #8b8b8b !important;
+}
+.v-application .secondary.lighten-2 {
+  background-color: #727272 !important;
+  border-color: #727272 !important;
+}
+.v-application .secondary--text.text--lighten-2 {
+  color: #727272 !important;
+  caret-color: #727272 !important;
+}
+.v-application .secondary.lighten-1 {
+  background-color: #595959 !important;
+  border-color: #595959 !important;
+}
+.v-application .secondary--text.text--lighten-1 {
+  color: #595959 !important;
+  caret-color: #595959 !important;
+}
+.v-application .secondary.darken-1 {
+  background-color: #2c2c2c !important;
+  border-color: #2c2c2c !important;
+}
+.v-application .secondary--text.text--darken-1 {
+  color: #2c2c2c !important;
+  caret-color: #2c2c2c !important;
+}
+.v-application .secondary.darken-2 {
+  background-color: #171717 !important;
+  border-color: #171717 !important;
+}
+.v-application .secondary--text.text--darken-2 {
+  color: #171717 !important;
+  caret-color: #171717 !important;
+}
+.v-application .secondary.darken-3 {
+  background-color: #000000 !important;
+  border-color: #000000 !important;
+}
+.v-application .secondary--text.text--darken-3 {
+  color: #000000 !important;
+  caret-color: #000000 !important;
+}
+.v-application .secondary.darken-4 {
+  background-color: #000000 !important;
+  border-color: #000000 !important;
+}
+.v-application .secondary--text.text--darken-4 {
+  color: #000000 !important;
+  caret-color: #000000 !important;
+}
+.v-application .accent {
+  background-color: #82b1ff !important;
+  border-color: #82b1ff !important;
+}
+.v-application .accent--text {
+  color: #82b1ff !important;
+  caret-color: #82b1ff !important;
+}
+.v-application .accent.lighten-5 {
+  background-color: #ffffff !important;
+  border-color: #ffffff !important;
+}
+.v-application .accent--text.text--lighten-5 {
+  color: #ffffff !important;
+  caret-color: #ffffff !important;
+}
+.v-application .accent.lighten-4 {
+  background-color: #f8ffff !important;
+  border-color: #f8ffff !important;
+}
+.v-application .accent--text.text--lighten-4 {
+  color: #f8ffff !important;
+  caret-color: #f8ffff !important;
+}
+.v-application .accent.lighten-3 {
+  background-color: #daffff !important;
+  border-color: #daffff !important;
+}
+.v-application .accent--text.text--lighten-3 {
+  color: #daffff !important;
+  caret-color: #daffff !important;
+}
+.v-application .accent.lighten-2 {
+  background-color: #bce8ff !important;
+  border-color: #bce8ff !important;
+}
+.v-application .accent--text.text--lighten-2 {
+  color: #bce8ff !important;
+  caret-color: #bce8ff !important;
+}
+.v-application .accent.lighten-1 {
+  background-color: #9fccff !important;
+  border-color: #9fccff !important;
+}
+.v-application .accent--text.text--lighten-1 {
+  color: #9fccff !important;
+  caret-color: #9fccff !important;
+}
+.v-application .accent.darken-1 {
+  background-color: #6596e2 !important;
+  border-color: #6596e2 !important;
+}
+.v-application .accent--text.text--darken-1 {
+  color: #6596e2 !important;
+  caret-color: #6596e2 !important;
+}
+.v-application .accent.darken-2 {
+  background-color: #467dc6 !important;
+  border-color: #467dc6 !important;
+}
+.v-application .accent--text.text--darken-2 {
+  color: #467dc6 !important;
+  caret-color: #467dc6 !important;
+}
+.v-application .accent.darken-3 {
+  background-color: #2364aa !important;
+  border-color: #2364aa !important;
+}
+.v-application .accent--text.text--darken-3 {
+  color: #2364aa !important;
+  caret-color: #2364aa !important;
+}
+.v-application .accent.darken-4 {
+  background-color: #004c90 !important;
+  border-color: #004c90 !important;
+}
+.v-application .accent--text.text--darken-4 {
+  color: #004c90 !important;
+  caret-color: #004c90 !important;
+}
+.v-application .error {
+  background-color: #ff5252 !important;
+  border-color: #ff5252 !important;
+}
+.v-application .error--text {
+  color: #ff5252 !important;
+  caret-color: #ff5252 !important;
+}
+.v-application .error.lighten-5 {
+  background-color: #ffe4d5 !important;
+  border-color: #ffe4d5 !important;
+}
+.v-application .error--text.text--lighten-5 {
+  color: #ffe4d5 !important;
+  caret-color: #ffe4d5 !important;
+}
+.v-application .error.lighten-4 {
+  background-color: #ffc6b9 !important;
+  border-color: #ffc6b9 !important;
+}
+.v-application .error--text.text--lighten-4 {
+  color: #ffc6b9 !important;
+  caret-color: #ffc6b9 !important;
+}
+.v-application .error.lighten-3 {
+  background-color: #ffa99e !important;
+  border-color: #ffa99e !important;
+}
+.v-application .error--text.text--lighten-3 {
+  color: #ffa99e !important;
+  caret-color: #ffa99e !important;
+}
+.v-application .error.lighten-2 {
+  background-color: #ff8c84 !important;
+  border-color: #ff8c84 !important;
+}
+.v-application .error--text.text--lighten-2 {
+  color: #ff8c84 !important;
+  caret-color: #ff8c84 !important;
+}
+.v-application .error.lighten-1 {
+  background-color: #ff6f6a !important;
+  border-color: #ff6f6a !important;
+}
+.v-application .error--text.text--lighten-1 {
+  color: #ff6f6a !important;
+  caret-color: #ff6f6a !important;
+}
+.v-application .error.darken-1 {
+  background-color: #df323b !important;
+  border-color: #df323b !important;
+}
+.v-application .error--text.text--darken-1 {
+  color: #df323b !important;
+  caret-color: #df323b !important;
+}
+.v-application .error.darken-2 {
+  background-color: #bf0025 !important;
+  border-color: #bf0025 !important;
+}
+.v-application .error--text.text--darken-2 {
+  color: #bf0025 !important;
+  caret-color: #bf0025 !important;
+}
+.v-application .error.darken-3 {
+  background-color: #9f0010 !important;
+  border-color: #9f0010 !important;
+}
+.v-application .error--text.text--darken-3 {
+  color: #9f0010 !important;
+  caret-color: #9f0010 !important;
+}
+.v-application .error.darken-4 {
+  background-color: #800000 !important;
+  border-color: #800000 !important;
+}
+.v-application .error--text.text--darken-4 {
+  color: #800000 !important;
+  caret-color: #800000 !important;
+}
+.v-application .info {
+  background-color: #2196f3 !important;
+  border-color: #2196f3 !important;
+}
+.v-application .info--text {
+  color: #2196f3 !important;
+  caret-color: #2196f3 !important;
+}
+.v-application .info.lighten-5 {
+  background-color: #d4ffff !important;
+  border-color: #d4ffff !important;
+}
+.v-application .info--text.text--lighten-5 {
+  color: #d4ffff !important;
+  caret-color: #d4ffff !important;
+}
+.v-application .info.lighten-4 {
+  background-color: #b5ffff !important;
+  border-color: #b5ffff !important;
+}
+.v-application .info--text.text--lighten-4 {
+  color: #b5ffff !important;
+  caret-color: #b5ffff !important;
+}
+.v-application .info.lighten-3 {
+  background-color: #95e8ff !important;
+  border-color: #95e8ff !important;
+}
+.v-application .info--text.text--lighten-3 {
+  color: #95e8ff !important;
+  caret-color: #95e8ff !important;
+}
+.v-application .info.lighten-2 {
+  background-color: #75ccff !important;
+  border-color: #75ccff !important;
+}
+.v-application .info--text.text--lighten-2 {
+  color: #75ccff !important;
+  caret-color: #75ccff !important;
+}
+.v-application .info.lighten-1 {
+  background-color: #51b0ff !important;
+  border-color: #51b0ff !important;
+}
+.v-application .info--text.text--lighten-1 {
+  color: #51b0ff !important;
+  caret-color: #51b0ff !important;
+}
+.v-application .info.darken-1 {
+  background-color: #007cd6 !important;
+  border-color: #007cd6 !important;
+}
+.v-application .info--text.text--darken-1 {
+  color: #007cd6 !important;
+  caret-color: #007cd6 !important;
+}
+.v-application .info.darken-2 {
+  background-color: #0064ba !important;
+  border-color: #0064ba !important;
+}
+.v-application .info--text.text--darken-2 {
+  color: #0064ba !important;
+  caret-color: #0064ba !important;
+}
+.v-application .info.darken-3 {
+  background-color: #004d9f !important;
+  border-color: #004d9f !important;
+}
+.v-application .info--text.text--darken-3 {
+  color: #004d9f !important;
+  caret-color: #004d9f !important;
+}
+.v-application .info.darken-4 {
+  background-color: #003784 !important;
+  border-color: #003784 !important;
+}
+.v-application .info--text.text--darken-4 {
+  color: #003784 !important;
+  caret-color: #003784 !important;
+}
+.v-application .success {
+  background-color: #4caf50 !important;
+  border-color: #4caf50 !important;
+}
+.v-application .success--text {
+  color: #4caf50 !important;
+  caret-color: #4caf50 !important;
+}
+.v-application .success.lighten-5 {
+  background-color: #dcffd6 !important;
+  border-color: #dcffd6 !important;
+}
+.v-application .success--text.text--lighten-5 {
+  color: #dcffd6 !important;
+  caret-color: #dcffd6 !important;
+}
+.v-application .success.lighten-4 {
+  background-color: #beffba !important;
+  border-color: #beffba !important;
+}
+.v-application .success--text.text--lighten-4 {
+  color: #beffba !important;
+  caret-color: #beffba !important;
+}
+.v-application .success.lighten-3 {
+  background-color: #a2ff9e !important;
+  border-color: #a2ff9e !important;
+}
+.v-application .success--text.text--lighten-3 {
+  color: #a2ff9e !important;
+  caret-color: #a2ff9e !important;
+}
+.v-application .success.lighten-2 {
+  background-color: #85e783 !important;
+  border-color: #85e783 !important;
+}
+.v-application .success--text.text--lighten-2 {
+  color: #85e783 !important;
+  caret-color: #85e783 !important;
+}
+.v-application .success.lighten-1 {
+  background-color: #69cb69 !important;
+  border-color: #69cb69 !important;
+}
+.v-application .success--text.text--lighten-1 {
+  color: #69cb69 !important;
+  caret-color: #69cb69 !important;
+}
+.v-application .success.darken-1 {
+  background-color: #2d9437 !important;
+  border-color: #2d9437 !important;
+}
+.v-application .success--text.text--darken-1 {
+  color: #2d9437 !important;
+  caret-color: #2d9437 !important;
+}
+.v-application .success.darken-2 {
+  background-color: #00791e !important;
+  border-color: #00791e !important;
+}
+.v-application .success--text.text--darken-2 {
+  color: #00791e !important;
+  caret-color: #00791e !important;
+}
+.v-application .success.darken-3 {
+  background-color: #006000 !important;
+  border-color: #006000 !important;
+}
+.v-application .success--text.text--darken-3 {
+  color: #006000 !important;
+  caret-color: #006000 !important;
+}
+.v-application .success.darken-4 {
+  background-color: #004700 !important;
+  border-color: #004700 !important;
+}
+.v-application .success--text.text--darken-4 {
+  color: #004700 !important;
+  caret-color: #004700 !important;
+}
+.v-application .warning {
+  background-color: #fb8c00 !important;
+  border-color: #fb8c00 !important;
+}
+.v-application .warning--text {
+  color: #fb8c00 !important;
+  caret-color: #fb8c00 !important;
+}
+.v-application .warning.lighten-5 {
+  background-color: #ffff9e !important;
+  border-color: #ffff9e !important;
+}
+.v-application .warning--text.text--lighten-5 {
+  color: #ffff9e !important;
+  caret-color: #ffff9e !important;
+}
+.v-application .warning.lighten-4 {
+  background-color: #fffb82 !important;
+  border-color: #fffb82 !important;
+}
+.v-application .warning--text.text--lighten-4 {
+  color: #fffb82 !important;
+  caret-color: #fffb82 !important;
+}
+.v-application .warning.lighten-3 {
+  background-color: #ffdf67 !important;
+  border-color: #ffdf67 !important;
+}
+.v-application .warning--text.text--lighten-3 {
+  color: #ffdf67 !important;
+  caret-color: #ffdf67 !important;
+}
+.v-application .warning.lighten-2 {
+  background-color: #ffc24b !important;
+  border-color: #ffc24b !important;
+}
+.v-application .warning--text.text--lighten-2 {
+  color: #ffc24b !important;
+  caret-color: #ffc24b !important;
+}
+.v-application .warning.lighten-1 {
+  background-color: #ffa72d !important;
+  border-color: #ffa72d !important;
+}
+.v-application .warning--text.text--lighten-1 {
+  color: #ffa72d !important;
+  caret-color: #ffa72d !important;
+}
+.v-application .warning.darken-1 {
+  background-color: #db7200 !important;
+  border-color: #db7200 !important;
+}
+.v-application .warning--text.text--darken-1 {
+  color: #db7200 !important;
+  caret-color: #db7200 !important;
+}
+.v-application .warning.darken-2 {
+  background-color: #bb5900 !important;
+  border-color: #bb5900 !important;
+}
+.v-application .warning--text.text--darken-2 {
+  color: #bb5900 !important;
+  caret-color: #bb5900 !important;
+}
+.v-application .warning.darken-3 {
+  background-color: #9d4000 !important;
+  border-color: #9d4000 !important;
+}
+.v-application .warning--text.text--darken-3 {
+  color: #9d4000 !important;
+  caret-color: #9d4000 !important;
+}
+.v-application .warning.darken-4 {
+  background-color: #802700 !important;
+  border-color: #802700 !important;
+}
+.v-application .warning--text.text--darken-4 {
+  color: #802700 !important;
+  caret-color: #802700 !important;
+}</style></head>
+
+<body>
+<div id="header">
+  <div class="container">
+    <div class="row">
+      <div class="col-3 col-md-3 img-logo">
+        <a href="https://kantiana.ru/">
+                      <img src="/temp_lib/img/logo.svg?1" alt="">
+                  </a>
+      </div>
+      <div class="col-5 col-md-5 org-name">
+        <h1>Балтийский федеральный университет имени Иммануила Канта</h1>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="row mr-0">
+          <div class="col-md-6 col-lg-12">
+            <div class="box_login">
+              <a class="select_lang" data-select-lang="ru" href="#">RU</a>
+              <span>|</span>
+              <a class="select_lang" data-select-lang="en" href="#">EN</a>
+            </div>
+          </div>
+          <div class="col-md-6 col-lg-12">
+            <div class="box_login">
+              <div class="box-login_profile">
+                                  <a href="/login">Авторизоваться</a>
+                              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <div id="menu_auth_true">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-12 wrap">
+          <ul>
+            <li>&nbsp;<br>&nbsp;</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<div id="content" class="container">
+    <div id="app"><div data-app="true" class="v-application v-application--is-ltr theme--light" id="app"><div class="v-application--wrap"><main class="v-main" data-booted="true" style="padding: 0px;"><div class="v-main__wrap"><div class="v-snack v-snack--has-background v-snack--right v-snack--top"><div class="v-snack__wrapper v-sheet theme--dark" style="background-color: rgb(129, 199, 132); border-color: rgb(129, 199, 132); display: none;"><div role="status" aria-live="polite" class="v-snack__content">
+    
+  </div><div class="v-snack__action "></div></div></div> <div class="container"><h4 class="mb-16">Список поступающих 2023 (магистратура)</h4> <div class="row align-center"><div class="d-flex col col-12"><div class="v-input v-input--is-label-active v-input--is-dirty v-input--dense theme--light v-text-field v-text-field--is-booted v-select"><div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-7" class="v-input__slot"><div class="v-select__slot"><label for="input-7" class="v-label v-label--active theme--light" style="left: 0px; right: auto; position: absolute;">Уровень образования</label><div class="v-select__selections"><div class="v-select__selection v-select__selection--comma">Магистратура</div><input id="input-7" readonly="readonly" type="text" aria-readonly="false" autocomplete="off"></div><div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon notranslate mdi mdi-menu-down theme--light"></i></div></div><input type="hidden" value="28724740-4989-11eb-7d9a-005056970631"></div><div class="v-menu"><!----></div></div><div class="v-text-field__details"><div class="v-messages theme--light"><div class="v-messages__wrapper"></div></div></div></div></div></div><div class="d-flex col col-12"><div class="v-input v-input--is-label-active v-input--is-dirty v-input--dense theme--light v-text-field v-text-field--is-booted v-select"><div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-12" class="v-input__slot"><div class="v-select__slot"><label for="input-12" class="v-label v-label--active theme--light" style="left: 0px; right: auto; position: absolute;">Форма образования</label><div class="v-select__selections"><div class="v-select__selection v-select__selection--comma">Очная</div><input id="input-12" readonly="readonly" type="text" aria-readonly="false" autocomplete="off"></div><div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon notranslate mdi mdi-menu-down theme--light"></i></div></div><input type="hidden" value="2214ebb4-4989-11eb-7d9a-005056970631"></div><div class="v-menu"><!----></div></div><div class="v-text-field__details"><div class="v-messages theme--light"><div class="v-messages__wrapper"></div></div></div></div></div></div><div class="d-flex col col-12"><div class="v-input v-input--is-label-active v-input--is-dirty v-input--dense theme--light v-text-field v-text-field--is-booted v-select"><div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-17" class="v-input__slot"><div class="v-select__slot"><label for="input-17" class="v-label v-label--active theme--light" style="left: 0px; right: auto; position: absolute;">Основание поступления</label><div class="v-select__selections"><div class="v-select__selection v-select__selection--comma">Бюджетная основа</div><input id="input-17" readonly="readonly" type="text" aria-readonly="false" autocomplete="off"></div><div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon notranslate mdi mdi-menu-down theme--light"></i></div></div><input type="hidden" value="221173da-4989-11eb-7d9a-005056970631|false"></div><div class="v-menu"><!----></div></div><div class="v-text-field__details"><div class="v-messages theme--light"><div class="v-messages__wrapper"></div></div></div></div></div></div><div class="d-flex col col-12"><div class="v-input v-input--is-label-active v-input--is-dirty v-input--dense theme--light v-text-field v-text-field--is-booted v-select"><div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-22" class="v-input__slot"><div class="v-select__slot"><label for="input-22" class="v-label v-label--active theme--light" style="left: 0px; right: auto; position: absolute;">Факультет</label><div class="v-select__selections"><div class="v-select__selection v-select__selection--comma">Высшая школа физических проблем и технологий</div><input id="input-22" readonly="readonly" type="text" aria-readonly="false" autocomplete="off"></div><div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon notranslate mdi mdi-menu-down theme--light"></i></div></div><input type="hidden" value="c5dca0c2-ba74-11ec-804c-005056970631"></div><div class="v-menu"><!----></div></div><div class="v-text-field__details"><div class="v-messages theme--light"><div class="v-messages__wrapper"></div></div></div></div></div></div><div class="d-flex col col-12"><div class="v-input v-input--is-label-active v-input--is-dirty v-input--dense theme--light v-text-field v-text-field--is-booted v-select"><div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-27" class="v-input__slot"><div class="v-select__slot"><label for="input-27" class="v-label v-label--active theme--light" style="left: 0px; right: auto; position: absolute;">Направление</label><div class="v-select__selections"><div class="v-select__selection v-select__selection--comma">03.04.02 Физика</div><input id="input-27" readonly="readonly" type="text" aria-readonly="false" autocomplete="off"></div><div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon notranslate mdi mdi-menu-down theme--light"></i></div></div><input type="hidden" value="509f36fa-6523-11eb-7d9a-005056970631"></div><div class="v-menu"><!----></div></div><div class="v-text-field__details"><div class="v-messages theme--light"><div class="v-messages__wrapper"></div></div></div></div></div></div><div class="d-flex col col-12"><div class="v-input v-input--is-label-active v-input--is-dirty v-input--dense theme--light v-text-field v-text-field--is-booted v-select"><div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-32" class="v-input__slot"><div class="v-select__slot"><label for="input-32" class="v-label v-label--active theme--light" style="left: 0px; right: auto; position: absolute;">Профиль</label><div class="v-select__selections"><div class="v-select__selection v-select__selection--comma">Без профиля</div><input id="input-32" readonly="readonly" type="text" aria-readonly="false" autocomplete="off"></div><div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon notranslate mdi mdi-menu-down theme--light"></i></div></div><input type="hidden" value="00000000-0000-0000-0000-000000000000"></div><div class="v-menu"><!----></div></div><div class="v-text-field__details"><div class="v-messages theme--light"><div class="v-messages__wrapper"></div></div></div></div></div></div></div></div> <div id="table-row" class="row align-center justify-center" style=""><div class="col col-12"><div role="alert" class="v-alert v-sheet theme--light green lighten-2"><div class="v-alert__wrapper"><div class="v-alert__content"><p>Последнее обновление: 20.07.2023 18:20</p> <p>Всего мест: 15</p></div></div></div></div> <div class="col col-12"><div class="v-data-table elevation-1 v-data-table--has-top v-data-table--has-bottom theme--light"><div class="v-input mx-4 theme--light v-text-field v-text-field--is-booted"><div class="v-input__control"><div class="v-input__slot"><div class="v-text-field__slot"><label for="input-42" class="v-label theme--light" style="left: 0px; right: auto; position: absolute;">Поиск по таблице</label><input id="input-42" type="text"></div></div><div class="v-text-field__details"><div class="v-messages theme--light"><div class="v-messages__wrapper"></div></div></div></div></div><div class="v-data-table__wrapper"><table><colgroup><col class=""><col class=""><col class=""><col class=""><col class=""><col class=""><col class=""></colgroup><thead class="v-data-table-header"><tr><th role="columnheader" scope="col" aria-label="Номер: Не упорядочено. Активируйте для упорядочивания по возрастанию." aria-sort="none" class="text-start sortable"><span>Номер</span><i aria-hidden="true" class="v-icon notranslate v-data-table-header__icon mdi mdi-arrow-up theme--light" style="font-size: 18px;"></i></th><th role="columnheader" scope="col" aria-label="СНИЛС / ID: Не упорядочено. Активируйте для упорядочивания по возрастанию." aria-sort="none" class="text-start sortable"><span>СНИЛС / ID</span><i aria-hidden="true" class="v-icon notranslate v-data-table-header__icon mdi mdi-arrow-up theme--light" style="font-size: 18px;"></i></th><th role="columnheader" scope="col" aria-label="Тип документа об образовании: Не упорядочено. Активируйте для упорядочивания по возрастанию." aria-sort="none" class="text-start sortable"><span>Тип документа об образовании</span><i aria-hidden="true" class="v-icon notranslate v-data-table-header__icon mdi mdi-arrow-up theme--light" style="font-size: 18px;"></i></th><th role="columnheader" scope="col" aria-label="Оригинал: Не упорядочено. Активируйте для упорядочивания по возрастанию." aria-sort="none" class="text-start sortable"><span>Оригинал</span><i aria-hidden="true" class="v-icon notranslate v-data-table-header__icon mdi mdi-arrow-up theme--light" style="font-size: 18px;"></i></th><th role="columnheader" scope="col" aria-label="Сумма баллов по ИД: Не упорядочено. Активируйте для упорядочивания по возрастанию." aria-sort="none" class="text-start sortable"><span>Сумма баллов по ИД</span><i aria-hidden="true" class="v-icon notranslate v-data-table-header__icon mdi mdi-arrow-up theme--light" style="font-size: 18px;"></i></th><th role="columnheader" scope="col" aria-label="Нуждаемость В общежитии: Не упорядочено. Активируйте для упорядочивания по возрастанию." aria-sort="none" class="text-start sortable"><span>Нуждаемость В общежитии</span><i aria-hidden="true" class="v-icon notranslate v-data-table-header__icon mdi mdi-arrow-up theme--light" style="font-size: 18px;"></i></th><th role="columnheader" scope="col" aria-label="Доставка документов: Не упорядочено. Активируйте для упорядочивания по возрастанию." aria-sort="none" class="text-start sortable"><span>Доставка документов</span><i aria-hidden="true" class="v-icon notranslate v-data-table-header__icon mdi mdi-arrow-up theme--light" style="font-size: 18px;"></i></th></tr></thead><tbody><tr class=""><td><!----> <span>
+                1
+              </span></td><td><!----> <span>
+                185-524-701 85
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Лично
+              </span></td><!----></tr><tr><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                163-967-905 20
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                12
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Лично
+              </span></td><!----></tr><tr><td><!----> <span>
+                3
+              </span></td><td><!----> <span>
+                157-613-396 83
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                4
+              </span></td><td><!----> <span>
+                184-324-734 75
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Лично
+              </span></td><!----></tr><tr><td><!----> <span>
+                5
+              </span></td><td><!----> <span>
+                163-046-723 49
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                12
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Лично
+              </span></td><!----></tr><tr><td><!----> <span>
+                6
+              </span></td><td><!----> <span>
+                190-249-509 72
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                7
+              </span></td><td><!----> <span>
+                201-712-667 16
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                8
+              </span></td><td><!----> <span>
+                164-043-746 51
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                5
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                9
+              </span></td><td><!----> <span>
+                189-955-157 53
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                10
+              </span></td><td><!----> <span>
+                163-366-010 51
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                30
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                11
+              </span></td><td><!----> <span>
+                155-929-543 08
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Лично
+              </span></td><!----></tr><tr><td><!----> <span>
+                12
+              </span></td><td><!----> <span>
+                165-953-754 16
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Лично
+              </span></td><!----></tr><tr><td><!----> <span>
+                13
+              </span></td><td><!----> <span>
+                163-794-427 02
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Лично
+              </span></td><!----></tr><tr><td><!----> <span>
+                14
+              </span></td><td><!----> <span>
+                154-492-188 80
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                7
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                15
+              </span></td><td><!----> <span>
+                153-066-896 71
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                7
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                16
+              </span></td><td><!----> <span>
+                156-688-761 31
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                17
+              </span></td><td><!----> <span>
+                146-778-747 26
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                18
+              </span></td><td><!----> <span>
+                138-159-265 78
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                19
+              </span></td><td><!----> <span>
+                174-626-076 82
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                Да
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                20
+              </span></td><td><!----> <span>
+                163-714-972 83
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                21
+              </span></td><td><!----> <span>
+                164-189-880 05
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                2
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr><tr><td><!----> <span>
+                22
+              </span></td><td><!----> <span>
+                164-236-559 69
+              </span></td><td><!----> <span>
+                Диплом бакалавра
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                0
+              </span></td><td><!----> <span>
+                Нет
+              </span></td><td><!----> <span>
+                Web
+              </span></td><!----></tr></tbody></table></div><div class="v-data-footer"><div class="v-data-footer__select">Строк на странице:<div class="v-input v-input--hide-details v-input--is-label-active v-input--is-dirty v-input--is-focused theme--light v-text-field v-text-field--is-booted v-select primary--text"><div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-47" class="v-input__slot"><div class="v-select__slot"><div class="v-select__selections"><div class="v-select__selection v-select__selection--comma">Все</div><input aria-label="Строк на странице:" id="input-47" readonly="readonly" type="text" aria-readonly="false" autocomplete="off" aria-activedescendant="list-item-63-3"></div><div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon notranslate mdi mdi-menu-down theme--light primary--text"></i></div></div><input type="hidden" value="-1"></div><div class="v-menu"></div></div></div></div></div><div class="v-data-footer__pagination">1-22 из 22</div><div class="v-data-footer__icons-before"><button type="button" disabled="disabled" class="v-btn v-btn--disabled v-btn--icon v-btn--round v-btn--text theme--light v-size--default" aria-label="Предыдущая страница"><span class="v-btn__content"><i aria-hidden="true" class="v-icon notranslate mdi mdi-chevron-left theme--light"></i></span></button></div><div class="v-data-footer__icons-after"><button type="button" class="v-btn v-btn--disabled v-btn--icon v-btn--round v-btn--text theme--light v-size--default" aria-label="Следующая страница" disabled="disabled"><span class="v-btn__content"><i aria-hidden="true" class="v-icon notranslate mdi mdi-chevron-right theme--light"></i></span></button></div></div></div></div></div></div></main></div><div class="v-menu__content theme--light v-menu-transition-leave-active v-menu-transition-leave-to" style="max-height: 304px; min-width: 38px; top: 874px; left: 460px; transform-origin: left top; z-index: 8;"><div role="listbox" tabindex="-1" class="v-list v-select-list v-sheet theme--light theme--light" id="list-47"><div tabindex="0" aria-selected="false" id="list-item-63-0" role="option" class="v-list-item v-list-item--link theme--light"><div class="v-list-item__content"><div class="v-list-item__title">5</div></div></div><div tabindex="0" aria-selected="false" id="list-item-63-1" role="option" class="v-list-item v-list-item--link theme--light"><div class="v-list-item__content"><div class="v-list-item__title">10</div></div></div><div tabindex="0" aria-selected="false" id="list-item-63-2" role="option" class="v-list-item v-list-item--link theme--light"><div class="v-list-item__content"><div class="v-list-item__title">15</div></div></div><div tabindex="0" aria-selected="true" id="list-item-63-3" role="option" class="v-list-item primary--text v-list-item--active v-list-item--link theme--light v-list-item--highlighted"><div class="v-list-item__content"><div class="v-list-item__title">Все</div></div><span class="v-ripple__container"><span class="v-ripple__animation v-ripple__animation--visible v-ripple__animation--in" data-activated="6530.299999999814" style="width: 71.5052px; height: 71.5052px; transform: translate(-9.25262px, -11.7526px) scale3d(1, 1, 1);" data-is-hiding="true"></span></span></div></div></div></div></div>
+</div>
+<div id="footer">
+    <div class="container d-flex">
+        <div class="col-md-8" style="padding-bottom: 0; padding-top: 0">
+            <div class="copyright">Приемная комиссия: 236041, Россия, Калининград,  ул. Генерал-лейтенанта Озерова, 57<br>
+8 (800) 600-52-39 (звонок бесплатный), <br>
+abiturient@kantiana.ru. <br>
+Если вы нашли ошибку, просьба сообщить об этом на электронную почту: abiturient@kantiana.ru.</div>
+        </div>
+        <div class="col-md-4" style="padding-bottom: 0; padding-top: 0">
+            <div class="copyright">© 2023 Электронная приемная комиссия</div>
+        </div>
+    </div>
+    <div class="container d-flex justify-content-end">
+        <a class="text-white" href="https://cdo-global.ru/" target="_blank">CDO Global</a>
+    </div>
+</div>
+<div class="popup-camera">
+    <span class="popup-camera--close color-main">
+        ✖
+    </span>
+    <div id="camera"></div>
+            <button class="btn popup-camera--button popup-camera--button-js">Сфотографировать и сохранить</button>
+    </div>
+<div class="notify-file-invalid">
+    <p>Нужно несколько JPG изображений или один PDF.</p>
+    <p>Загрузите заново.</p>
+</div>
+<div class="notify-file-size-invalid">
+    <p>Выбран слишком большой файл.</p>
+</div>
+
+<script src="/temp_lib/js/check_pass.js?1"></script>
+
+<script>
+
+    let message_error_add_foto = 'Не удалось добавить фото.',
+        message_success_add_foto = 'Фото успешно загружено.',
+        read_only = parseInt('0'),
+        file_size = parseInt('18');
+
+    $('.getPhotoCamJs').on('click', function () {
+        $('.popup-camera').fadeIn();
+        Webcam.set({
+            width: 640,
+            height: 480,
+            image_format: 'jpeg',
+            jpeg_quality: 100
+        });
+        Webcam.attach('#camera');
+    });
+    $('.popup-camera--close').on('click', function () {
+        $('.popup-camera').fadeOut();
+    });
+
+    $('.popup-camera--button-js').on('click', function () {
+        Webcam.snap(function (data_uri) {
+            $('.popup-camera').fadeOut();
+            let form_data = new FormData();
+            form_data.append("type", "add-user-file");
+            form_data.append("name", "avatar");
+            form_data.append("file", data_uri);
+            showProcess();
+            $.ajax({
+                url: '/ajax/user_data',
+                type: 'POST',
+                cache: false,
+                contentType: false,
+                processData: false,
+                data: form_data,
+                success: function (data) {
+                    setTimeout(function () {
+                        data = JSON.parse(data);
+                        hideProcess();
+                        if (data.error) {
+                            showMessageAlert(message_error_add_foto, 'error');
+                        } else {
+                            showMessageAlert(message_success_add_foto, 'success', true);
+                            $('.avatarChangeJs').css('background-image', 'url(' + data_uri + ')');
+                        }
+                    }, 1500);
+                },
+                error: function (data) {
+                    setTimeout(function () {
+                        hideProcess();
+                        showMessageAlert(message_error_add_foto, 'error');
+                    }, 1000);
+                }
+            });
+        });
+    });
+    $('.avatarDownloadJs').on('change', function () {
+        var img = $(this).prop('files')[0];
+        var imgTmp = $(this).prop('files')[0];
+        var reader = new FileReader();
+        reader.readAsBinaryString(img);
+
+        reader.onload = function () {
+            img = btoa(reader.result);
+            img = `data:${imgTmp.type};base64,${img}`;
+            let form_data = new FormData();
+            form_data.append("type", "add-user-file");
+            form_data.append("name", "avatar");
+            form_data.append("file", img);
+            showProcess();
+            $.ajax({
+                url: '/ajax/user_data',
+                type: 'POST',
+                cache: false,
+                contentType: false,
+                processData: false,
+                data: form_data,
+                success: function (data) {
+                    setTimeout(function () {
+                        data = JSON.parse(data);
+                        hideProcess();
+                        if (data.error) {
+                            showMessageAlert(message_error_add_foto, 'error');
+                        } else {
+                            showMessageAlert(message_success_add_foto, 'success', true);
+                            $('.avatarChangeJs').css('background-image', 'url(' + img + ')');
+                        }
+                    }, 1500);
+                },
+                error: function (data) {
+                    setTimeout(function () {
+                        hideProcess();
+                        showMessageAlert(message_error_add_foto, 'error');
+                    }, 1000);
+                }
+            });
+        };
+    });
+
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/materialize-autocomplete/1.0.7/jquery.materialize-autocomplete.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js" integrity="sha512-uto9mlQzrs59VwILcLiRYeLKPPbS/bT71da/OEBYEwcdNUk8jYIy+D176RYoop1Da+f9mvkYrmj5MCLZWEtQuA==" crossorigin="anonymous"></script>
+<script>
+    $('.dropdown-triggerJS').dropdown({
+        constrainWidth: false
+    });
+
+    $('.modal').modal();
+</script>
+
+
+
+
+<script type="application/javascript">
+    const ru = {
+        badge: 'знак',
+        close: 'Закрыть',
+        dataIterator: {
+            noResultsText: 'Не найдено подходящих записей',
+            loadingText: 'Запись загружается...'
+        },
+        dataTable: {
+            itemsPerPageText: 'Строк на странице:',
+            ariaLabel: {
+                sortDescending: 'Упорядочено по убыванию.',
+                sortAscending: 'Упорядочено по возрастанию.',
+                sortNone: 'Не упорядочено.',
+                activateNone: 'Активируйте, чтобы убрать сортировку.',
+                activateDescending: 'Активируйте для упорядочивания убыванию.',
+                activateAscending: 'Активируйте для упорядочивания по возрастанию.'
+            },
+            sortBy: 'Сортировать по'
+        },
+        dataFooter: {
+            itemsPerPageText: 'Записей на странице:',
+            itemsPerPageAll: 'Все',
+            nextPage: 'Следующая страница',
+            prevPage: 'Предыдущая страница',
+            firstPage: 'Первая страница',
+            lastPage: 'Последняя страница',
+            pageText: '{0}-{1} из {2}'
+        },
+        datePicker: {
+            itemsSelected: '{0} выбран',
+            nextMonthAriaLabel: 'Следующий месяц',
+            nextYearAriaLabel: 'Следующий год',
+            prevMonthAriaLabel: 'Прошлый месяц',
+            prevYearAriaLabel: 'Предыдущий год'
+        },
+        noDataText: 'Отсутствуют данные',
+        carousel: {
+            prev: 'Предыдущий слайд',
+            next: 'Следующий слайд',
+            ariaLabel: {
+                delimiter: 'Слайд {0} из {1}'
+            }
+        },
+        calendar: {
+            moreEvents: 'Еще {0}'
+        },
+        fileInput: {
+            counter: 'Файлов: {0}',
+            counterSize: 'Файлов: {0} (всего {1})'
+        },
+        timePicker: {
+            am: 'AM',
+            pm: 'PM'
+        },
+        pagination: {
+            ariaLabel: {
+                wrapper: 'Навигация по страницам',
+                next: 'Следующая страница',
+                previous: 'Предыдущая страница',
+                page: 'Перейти на страницу {0}',
+                currentPage: 'Текущая страница, Страница {0}'
+            }
+        },
+        rating: {
+            ariaLabel: {
+                icon: 'Rating {0} of {1}'
+            }
+        }
+    };
+    Vue.config.devtools = true
+    const appp = new Vue({
+        delimiters: ['${', '}'],
+        el: '#app',
+        vuetify: new Vuetify({
+            lang: {
+                locales: {ru},
+                current: 'ru'
+            }}),
+        data: function () {
+            return {
+                table: [],
+                show: false,
+                snackbar: {
+                    show: false,
+                    text: '',
+                    type: ''
+                }
+            }
+        },
+    });
+</script>
+</body></html>
