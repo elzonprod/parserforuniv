@@ -30,7 +30,7 @@ def selenium_dowload_page(url):
         driver.close()
         driver.quit()
 
-def table_value(name):
+def table_value():
     with open("index.html") as file:
         src = file.read()
 
@@ -55,8 +55,11 @@ def table_value(name):
             else:
                 temp_list.append(sublist)
         merged_list.append(temp_list)
-  
 
+    return merged_list
+    
+  
+def writer_in_table(data, name):
     with open(f'/home/trytestme/my-app/pythonproject/data/{name}'+'_table.csv', 'w', encoding='utf-8' ) as file:
         writer = csv.writer(file)
 
@@ -74,13 +77,24 @@ def table_value(name):
 
     with open(f'/home/trytestme/my-app/pythonproject/data/{name}'+'_table.csv', 'a', encoding='utf-8') as file:
         writer = csv.writer(file)
-        for row in merged_list:
+        for row in data:
             writer.writerow([item for sublist in row for item in sublist])
+
+# def ident(data):
+#     counts = []
+#     for documents in data:
+#         count.append(documents[1])
+#     # print(counts)
+
+#     for count in counts:
+#         print(count)  
 
     
     
     
 for name in urls:
     selenium_dowload_page(urls[name])
-    table_value(name)
+    writer_in_table(table_value(),name)
+
+# ident(table_value())
     
